@@ -1,51 +1,78 @@
-FROM nvidia/cudagl:11.3.0-devel-ubuntu20.04
+FROM nvidia/cuda:11.8.0-devel-ubuntu22.04
+
+#cudagl things
+RUN apt-get update && apt-get install -y \
+    libgl1-mesa-glx \
+    libgl1-mesa-dev \
+    libegl1 \
+    libx11-6 \
+    && rm -rf /var/lib/apt/lists/*
 
 ENV DEBIAN_FRONTEND noninteractive
 
+# Install system dependencies + Python 3.8
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-	python3-opencv \
-	ca-certificates \
-	python3-dev \
-	git \
-	wget \
-	sudo \
-	ninja-build \
-  && apt-get clean \
+    wget \
+    build-essential \
+    libssl-dev \
+    zlib1g-dev \
+    libncurses5-dev \
+    libncursesw5-dev \
+    libreadline-dev \
+    libsqlite3-dev \
+    libgdbm-dev \
+    libdb5.3-dev \
+    libbz2-dev \
+    libexpat1-dev \
+    liblzma-dev \
+    tk-dev \
+    libffi-dev \
+    ca-certificates \
+    git \
+    ninja-build \
+    python3-opencv \
   && rm -rf /var/lib/apt/lists/*
 
-RUN ln -sv /usr/bin/python3 /usr/bin/python
+#build python 3.8
+RUN wget https://www.python.org/ftp/python/3.8.18/Python-3.8.18.tgz && \
+    tar -xzf Python-3.8.18.tgz && \
+    cd Python-3.8.18 && \
+    ./configure --enable-optimizations && \
+    make -j$(nproc) && \
+    make altinstall && \
+    cd .. && \
+    rm -rf Python-3.8.18 Python-3.8.18.tgz
 
-RUN wget https://bootstrap.pypa.io/pip/3.8/get-pip.py && \
-	python3 get-pip.py && \
-	rm get-pip.py 
+RUN /usr/local/bin/python3.8 -m venv /opt/py38
 
-RUN pip install "pip<24.1"
-
+# Always use the venv pip!
+RUN /opt/py38/bin/pip install --upgrade pip "pip<24.1"
 # install lsb-release and curl
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
     lsb-release \
     curl \
+	gnupg \
 	# cmake \
  && apt-get clean \
  && rm -rf /var/lib/apt/lists/*
 
 # add the keys
-RUN sudo sh -c 'echo "deb http://packages.ros.org/ros/ubuntu $(lsb_release -sc) main" > /etc/apt/sources.list.d/ros-latest.list'
-RUN curl -s https://raw.githubusercontent.com/ros/rosdistro/master/ros.asc | sudo apt-key add -
+RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+	| gpg --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg
 
-RUN pip install tensorboard onnx   # cmake from apt-get is too old
+RUN /opt/py38/bin/pip install tensorboard onnx   # cmake from apt-get is too old
 
-RUN pip install setuptools==69.5.1
+RUN /opt/py38/bin/pip install setuptools==69.5.1
 
-RUN pip install torch==1.12.1+cu113 torchvision==0.13.1+cu113 torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cu113
-RUN pip install 'git+https://github.com/facebookresearch/fvcore'
+RUN /opt/py38/bin/pip install torch==1.12.1+cu113 torchvision==0.13.1+cu113 torchaudio==0.12.1 --extra-index-url https://download.pytorch.org/whl/cu113
+RUN /opt/py38/bin/pip install 'git+https://github.com/facebookresearch/fvcore'
 
 ENV FORCE_CUDA="1"
 
 ARG TORCH_CUDA_ARCH_LIST="Kepler;Kepler+Tesla;Maxwell;Maxwell+Tegra;Pascal;Volta;Turing"
 ENV TORCH_CUDA_ARCH_LIST="${TORCH_CUDA_ARCH_LIST}"
 
-RUN pip install 'git+https://github.com/facebookresearch/detectron2'
+RUN /opt/py38/bin/pip install 'git+https://github.com/facebookresearch/detectron2'
 
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
 	libjpeg-dev zlib1g-dev \
@@ -85,20 +112,39 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
  && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt /tmp/requirements.txt
-RUN pip install -r /tmp/requirements.txt
+RUN /opt/py38/bin/pip install \
+	--no-cache-dir \
+    --retries 10 \
+    --timeout 1000 \
+    -r /tmp/requirements.txt
 
-# install ros
-RUN apt-get update \
- && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-    ros-noetic-desktop-full \
-    ros-noetic-catkin \
-    ros-noetic-vision-msgs \
- && apt-get clean \
- && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl gnupg lsb-release ca-certificates
+
+RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+    | gpg --batch --yes --dearmor -o /usr/share/keyrings/ros-archive-keyring.gpg
+
+RUN echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] \
+http://packages.ros.org/ros2/ubuntu jammy main" \
+> /etc/apt/sources.list.d/ros2.list
+
+# install ros humble 
+RUN apt-get update && apt-get upgrade -y
+RUN dpkg --configure -a || true
+RUN apt-get -f install -y || true
+# install ros humble
+RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+	ros-humble-desktop \
+    python3-colcon-common-extensions \
+    ros-humble-vision-msgs \
+    ros-humble-cv-bridge \
+    ros-humble-image-transport \
+  && apt-get clean \
+  && rm -rf /var/lib/apt/lists/*
 
 SHELL ["/bin/bash", "-c"]
-RUN source /opt/ros/noetic/setup.bash
-RUN echo "source /opt/ros/noetic/setup.bash" >> ~/.bashrc
+RUN source /opt/ros/humble/setup.bash
+RUN echo "source /opt/ros/humble/setup.bash" >> ~/.bashrc
 RUN source ~/.bashrc
 
 # install python dependencies
@@ -114,20 +160,34 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 # catkin tools
-RUN apt-get update && apt-get install --no-install-recommends -y --allow-unauthenticated \
-     python3-catkin-tools \
-     && rm -rf /var/lib/apt/lists/*
-RUN sudo rosdep init
-RUN rosdep update
-RUN mkdir -p /root/catkin_ws/src
-RUN /bin/bash -c  '. /opt/ros/noetic/setup.bash; cd /root/catkin_ws; catkin config -DPYTHON_EXECUTABLE=/usr/bin/python3 -DPYTHON_INCLUDE_DIR=/usr/include/python3.8 -DPYTHON_LIBRARY=/usr/lib/x86_64-linux-gnu/libpython3.8.so; catkin build'
+# Install colcon and tools
+RUN apt-get update && apt-get install -y \
+    python3-colcon-common-extensions \
+    python3-rosdep \
+    && rm -rf /var/lib/apt/lists/*
 
-# clone and build message and service definitions
-RUN /bin/bash -c 'cd /root/catkin_ws/src; \
-                  git clone https://github.com/v4r-tuwien/object_detector_msgs.git'
-RUN /bin/bash -c 'cd /root/catkin_ws/src; \
-                  git clone https://gitlab.informatik.uni-bremen.de/robokudo/robokudo_msgs.git'
-RUN /bin/bash -c '. /opt/ros/noetic/setup.bash; cd /root/catkin_ws; catkin build'
+# Install tf_transformations
+RUN apt-get update && apt-get install -y \
+    ros-humble-tf-transformations
+
+# Install cyclonedds
+RUN apt-get update && apt-get install -y \
+    ros-humble-rmw-cyclonedds-cpp \
+    && rm -rf /var/lib/apt/lists/*
+
+# Initialize rosdep (only needed once per container)
+RUN rosdep init && rosdep update
+# Create workspace
+RUN mkdir -p /root/ros2_ws/src
+# Build empty workspace
+RUN /bin/bash -c "source /opt/ros/humble/setup.bash && cd /root/ros2_ws && colcon build"
+
+# clone and build message and service definitions (doing it manually for now)
+#RUN /bin/bash -c 'cd /root/ros2_ws/src; \
+#                  git clone https://github.com/v4r-tuwien/object_detector_msgs.git'
+RUN /bin/bash -c 'cd /root/ros2_ws/src; \
+                  git clone -b ros2_jazzy https://gitlab.informatik.uni-bremen.de/robokudo/robokudo_msgs.git'
+RUN /bin/bash -c '. /opt/ros/humble/setup.bash; cd /root/ros2_ws; colcon build'
 
 WORKDIR /root
 

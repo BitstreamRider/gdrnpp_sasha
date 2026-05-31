@@ -1,6 +1,8 @@
+#removed ROS related code to make this file combatible with python < 3.9
 import os
 import os.path as osp
 import sys
+import time
 cur_dir = osp.dirname(osp.abspath(__file__))
 PROJ_ROOT = osp.normpath(osp.join(cur_dir, "../../.."))
 sys.path.insert(0, PROJ_ROOT)
@@ -10,7 +12,6 @@ import numpy as np
 import cv2
 import json
 
-import rospy
 from sensor_msgs.msg import Image
 from cv_bridge import CvBridge
 import math
@@ -38,8 +39,7 @@ from setproctitle import setproctitle
 from mmcv import Config
 from scipy.spatial.transform import Rotation
 
-import copy
-import rospy
+#import rospy
 import yaml
 from core.gdrn_modeling.models import (
     GDRN,
@@ -51,18 +51,17 @@ from core.gdrn_modeling.models import (
     GDRN_Rho_flow,
 )  # noqa
 
-def align_sympose_with_vector(vector, pose, align_axis, rot_axis): 
+def align_sympose_with_vector(vector, pose, align_axis, rot_axis):
     vector /= np.linalg.norm(vector)
-    proj_vector_on_rot_axis = np.dot(vector, pose[:3, rot_axis]) *pose[:3, rot_axis] 
-    proj_vector_rot_plane = vector - proj_vector_on_rot_axis 
-    proj_vector_rot_plane /= np.linalg.norm(proj_vector_rot_plane) 
-    alpha = math.acos(np.dot(pose[:3, align_axis], proj_vector_rot_plane)) 
+    proj_vector_on_rot_axis = np.dot(vector, pose[:3, rot_axis]) *pose[:3, rot_axis]
+    proj_vector_rot_plane = vector - proj_vector_on_rot_axis
+    proj_vector_rot_plane /= np.linalg.norm(proj_vector_rot_plane)
+    alpha = math.acos(np.dot(pose[:3, align_axis], proj_vector_rot_plane))
     if np.dot(np.cross(proj_vector_rot_plane, pose[:3, align_axis]), pose[:3, rot_axis]) > 0:
         alpha *= -1
     euler_angles = [0., 0., 0.]
     euler_angles[rot_axis] = alpha
     new_rot = np.dot(pose[:3, :3], tf3d.euler.euler2mat(*euler_angles, 'sxyz'))
-    # new_rot = np.matmul(pose[:3, :3], tf3d.euler.euler2mat(*euler_angles, 'sxyz'))
 
     return new_rot
 
@@ -95,7 +94,7 @@ class GdrnPredictor():
                                     num_gpus=1,
                                     )
 
-        self.frame_id = rospy.get_param('/pose_estimator/color_frame_id')
+        #self.frame_id = rospy.get_param('/pose_estimator/color_frame_id')
         self.cfg = self.setup(self.args)
         self.objs_dir = path_to_obj_models
 
@@ -217,6 +216,7 @@ class GdrnPredictor():
                 )
             data_dict["cur_res"].append(cur_res)
 
+
         if not reflow and self.cfg.TEST.USE_DEPTH_REFINE:
            self.process_depth_refine(data_dict, out_dict, renderer_request_queue, renderer_result_queue)
 
@@ -226,15 +226,18 @@ class GdrnPredictor():
             pose[:3, :3] = res['R']
             pose[:3, 3] = res['t']
 
-            if reflow and len(plane_normal) != 0:
-                tmp_pose = copy.deepcopy(pose)
-                z_vec = np.array([0.,0.,-1.])
-                proj_vector_on_plane_normal = np.dot(z_vec, plane_normal) * plane_normal
-                x_plane_vec = z_vec - proj_vector_on_plane_normal # x_plane_vec is no normal to proj_vector_on_plane_normal, so on the plane
-                pose[:3, :3] = align_sympose_with_vector(x_plane_vec, tmp_pose, 0, 2)
-                
-            poses[self.objs.get(res['obj_id'])] = pose
+            if len(plane_normal) != 0:
+                tmp_pose = np.eye(4)
+                tmp_pose[:3, :3] = res['R']
+                tmp_pose[:3, 3] = res['t']
 
+                if reflow:
+                    z_vec = np.array([0.,0.,-1.])
+                    proj_vector_on_plane_normal = np.dot(z_vec, plane_normal) * plane_normal
+                    x_plane_vec = z_vec - proj_vector_on_plane_normal
+                    pose[:3, :3] = align_sympose_with_vector(x_plane_vec, tmp_pose, 0, 2)
+
+            poses[self.objs.get(res['obj_id'])] = pose
 
         return poses
 
@@ -262,8 +265,8 @@ class GdrnPredictor():
 
         out_i = -1
       
-        pub_sensor = rospy.Publisher('/depth_sensor_mask', Image, queue_size=10)
-        pub_render = rospy.Publisher('/depth_render_mask', Image, queue_size=10)
+        #pub_sensor = rospy.Publisher('/depth_sensor_mask', Image, queue_size=10)
+        #pub_render = rospy.Publisher('/depth_render_mask', Image, queue_size=10)
         bridge = CvBridge()
         
         for i, _input in enumerate([inputs]):
@@ -299,7 +302,7 @@ class GdrnPredictor():
 
                 depth_sensor_mask_crop_image = (depth_sensor_mask_crop * 255).astype(np.uint8)
                 depth_sensor_crop_ros = bridge.cv2_to_imgmsg(depth_sensor_mask_crop_image, encoding='passthrough')
-                pub_sensor.publish(depth_sensor_crop_ros)
+                #pub_sensor.publish(depth_sensor_crop_ros)
 
                 net_cfg = cfg.MODEL.POSE_NET
                 crop_res = net_cfg.OUTPUT_RES
@@ -309,9 +312,12 @@ class GdrnPredictor():
                         self.ren_models[self.cls_names.index(cls_name)],
                         pose_est
                     ])
-                    
+                    start_time = time.time()
                     while renderer_result_queue.empty():
-                        rospy.sleep(0.03)
+                        #rospy.sleep(0.03)
+                        if time.time() - start_time > 10.0:
+                            break
+                        time.sleep(0.01)
                     ren_dp = renderer_result_queue.get(block=True, timeout=0.2)
                     
                     ren_mask = ren_dp > 0
@@ -351,45 +357,45 @@ class GdrnPredictor():
                     pose_est = np.hstack([rot_est, trans_est.reshape(3, 1)])
                 inputs["cur_res"][inst_i]["R"] = pose_est[:3,:3]
                 inputs["cur_res"][inst_i]["t"] = pose_est[:3,3]
-                self.publish_mesh_marker(cls_name, pose_est[:3, :3], pose_est[:3, 3])
+                #self.publish_mesh_marker(cls_name, pose_est[:3, :3], pose_est[:3, 3])
         
-    def publish_mesh_marker(self, cls_name, R_est, t_est):
-        from visualization_msgs.msg import Marker
-        vis_pub = rospy.Publisher("/gdrnet_meshes", Marker, latch=True, queue_size=10)
-        model = self.ren_models[self.cls_names.index(cls_name)]
-        model_vertices = np.array(model.vertices)
-        model_colors = model.colors
-        marker = Marker()
-        marker.header.frame_id = self.frame_id
-        marker.header.stamp = rospy.Time.now()
-        marker.type = Marker.TRIANGLE_LIST
-        marker.ns = cls_name
-        marker.action = Marker.ADD
-        marker.pose.position.x = t_est[0]
-        marker.pose.position.y = t_est[1]
-        marker.pose.position.z = t_est[2]
-        quat = Rotation.from_matrix(R_est).as_quat()
-        marker.pose.orientation.x = quat[0]
-        marker.pose.orientation.y = quat[1]
-        marker.pose.orientation.z = quat[2]
-        marker.pose.orientation.w = quat[3]
-        marker.scale.x = 1.0
-        marker.scale.y = 1.0
-        marker.scale.z = 1.0
-        from geometry_msgs.msg import Point
-        from std_msgs.msg import ColorRGBA
-        assert model_vertices.shape[0] == model_colors.shape[0]
+    # def publish_mesh_marker(self, cls_name, R_est, t_est):
+        # from visualization_msgs.msg import Marker
+        # #vis_pub = rospy.Publisher("/gdrnet_meshes", Marker, latch=True, queue_size=10)
+        # model = self.ren_models[self.cls_names.index(cls_name)]
+        # model_vertices = np.array(model.vertices)
+        # model_colors = model.colors
+        # marker = Marker()
+        # marker.header.frame_id = self.frame_id
+        # #marker.header.stamp = rospy.Time.now()
+        # marker.type = Marker.TRIANGLE_LIST
+        # marker.ns = cls_name
+        # marker.action = Marker.ADD
+        # marker.pose.position.x = t_est[0]
+        # marker.pose.position.y = t_est[1]
+        # marker.pose.position.z = t_est[2]
+        # quat = Rotation.from_matrix(R_est).as_quat()
+        # marker.pose.orientation.x = quat[0]
+        # marker.pose.orientation.y = quat[1]
+        # marker.pose.orientation.z = quat[2]
+        # marker.pose.orientation.w = quat[3]
+        # marker.scale.x = 1.0
+        # marker.scale.y = 1.0
+        # marker.scale.z = 1.0
+        # from geometry_msgs.msg import Point
+        # from std_msgs.msg import ColorRGBA
+        # assert model_vertices.shape[0] == model_colors.shape[0]
 
-        # TRIANGLE_LIST needs 3*x points to render x triangles 
-        # => find biggest number smaller than model_vertices.shape[0] that is still divisible by 3
-        shape_vertices = 3*int((model_vertices.shape[0] - 1)/3)
-        for i in range(shape_vertices):
-            pt = Point(x = model_vertices[i, 0], y = model_vertices[i, 1], z = model_vertices[i, 2])
-            marker.points.append(pt)
-            rgb = ColorRGBA(r = 0, g = 0, b = 1, a = 1.0)
-            marker.colors.append(rgb)
+        # # TRIANGLE_LIST needs 3*x points to render x triangles 
+        # # => find biggest number smaller than model_vertices.shape[0] that is still divisible by 3
+        # shape_vertices = 3*int((model_vertices.shape[0] - 1)/3)
+        # for i in range(shape_vertices):
+            # pt = Point(x = model_vertices[i, 0], y = model_vertices[i, 1], z = model_vertices[i, 2])
+            # marker.points.append(pt)
+            # rgb = ColorRGBA(r = 0, g = 0, b = 1, a = 1.0)
+            # marker.colors.append(rgb)
 
-        vis_pub.publish(marker)
+        # #vis_pub.publish(marker)
         
 
 
@@ -696,54 +702,52 @@ class GdrnPredictor():
         # cfg.freeze()
         return cfg
 
-    def gdrn_visualization(self, batch, out_dict, image):
-        vis_dict = {}
+    # def gdrn_visualization(self, batch, out_dict, image):
+    #     vis_dict = {}
 
-        # for crop and resize
-        bs = batch["roi_cls"].shape[0]
-        # print(f"=== [HELP] batch[roi_cls].shape[0]={bs}, batch[roi_cls]={batch['roi_cls']}")
-        tensor_kwargs = {"dtype": torch.float32, "device": "cuda"}
-        rois_xy0 = batch["roi_center"] - batch["scale"].view(bs, -1) / 2  # bx2
-        rois_xy1 = batch["roi_center"] + batch["scale"].view(bs, -1) / 2  # bx2
-        batch["inst_rois"] = torch.cat([torch.arange(bs, **tensor_kwargs).view(-1, 1), rois_xy0, rois_xy1], dim=1)
+    #     # for crop and resize
+    #     bs = batch["roi_cls"].shape[0]
+    #     #print(bs)
+    #     tensor_kwargs = {"dtype": torch.float32, "device": "cuda"}
+    #     rois_xy0 = batch["roi_center"] - batch["scale"].view(bs, -1) / 2  # bx2
+    #     rois_xy1 = batch["roi_center"] + batch["scale"].view(bs, -1) / 2  # bx2
+    #     batch["inst_rois"] = torch.cat([torch.arange(bs, **tensor_kwargs).view(-1, 1), rois_xy0, rois_xy1], dim=1)
 
-        im_H = int(batch["im_H"][0])
-        im_W = int(batch["im_W"][0])
-        if "full_mask" in out_dict:
-            raw_full_masks = out_dict["full_mask"]
-            full_mask_probs = get_out_mask(self.cfg, raw_full_masks)
-            full_masks_in_im = paste_masks_in_image(
-                full_mask_probs[:, 0, :, :],
-                batch["inst_rois"][:, 1:5],
-                image_shape=(im_H, im_W),
-                threshold=0.5,
-            )
-            full_masks_np = full_masks_in_im.detach().to(torch.uint8).cpu().numpy()
+    #     im_H = int(batch["im_H"][0])
+    #     im_W = int(batch["im_W"][0])
+    #     if "full_mask" in out_dict:
+    #         raw_full_masks = out_dict["full_mask"]
+    #         full_mask_probs = get_out_mask(self.cfg, raw_full_masks)
+    #         full_masks_in_im = paste_masks_in_image(
+    #             full_mask_probs[:, 0, :, :],
+    #             batch["inst_rois"][:, 1:5],
+    #             image_shape=(im_H, im_W),
+    #             threshold=0.5,
+    #         )
+    #         full_masks_np = full_masks_in_im.detach().to(torch.uint8).cpu().numpy()
 
-            img_vis_full_mask = vis_image_mask_bbox_cv2(
-                image,
-                [full_masks_np[i] for i in range(bs)],
-                [batch["bbox_est"][i].detach().cpu().numpy() for i in range(bs)],
-                labels=self.cls_names,
-            )
+    #         img_vis_full_mask = vis_image_mask_bbox_cv2(
+    #             image,
+    #             [full_masks_np[i] for i in range(bs)],
+    #             [batch["bbox_est"][i].detach().cpu().numpy() for i in range(bs)],
+    #             labels=self.cls_names,
+    #         )
 
-            # print(f"=== [HELP] im_det_and_mask_full")
-            vis_dict[f"im_det_and_mask_full"] = img_vis_full_mask[:, :, ::-1]
+    #         vis_dict[f"im_det_and_mask_full"] = img_vis_full_mask[:, :, ::-1]
 
-        for i in range(bs):
-            R = batch["cur_res"][i]["R"]
-            t = batch["cur_res"][i]["t"]
-            # pose_est = np.hstack([R, t.reshape(3, 1)])
-            proj_pts_est = misc.project_pts(self.obj_models[i+1]["pts"], self.cam, R, t)
-            mask_pose_est = misc.points2d_to_mask(proj_pts_est, im_H, im_W)
-            image_mask_pose_est = vis_image_mask_cv2(image, mask_pose_est, color="yellow" if i == 0 else "blue")
-            image_mask_pose_est = vis_image_bboxes_cv2(
-                image_mask_pose_est,
-                [batch["bbox_est"][i].detach().cpu().numpy()],
-                labels=[self.cls_names[i]]
-            )
-            # print(f"=== [HELP] im_{i}_mask_pose_est")
-            vis_dict[f"im_{i}_mask_pose_est"] = image_mask_pose_est[:, :, ::-1]
-        show_ims = np.hstack([cv2.cvtColor(_v, cv2.COLOR_BGR2RGB) for _k, _v in vis_dict.items()])
-        cv2.imshow('result', show_ims)
-        cv2.waitKey(1)
+    #     for i in range(bs):
+    #         R = batch["cur_res"][i]["R"]
+    #         t = batch["cur_res"][i]["t"]
+    #         # pose_est = np.hstack([R, t.reshape(3, 1)])
+    #         proj_pts_est = misc.project_pts(self.obj_models[i+1]["pts"], self.cam, R, t)
+    #         mask_pose_est = misc.points2d_to_mask(proj_pts_est, im_H, im_W)
+    #         image_mask_pose_est = vis_image_mask_cv2(image, mask_pose_est, color="yellow" if i == 0 else "blue")
+    #         image_mask_pose_est = vis_image_bboxes_cv2(
+    #             image_mask_pose_est,
+    #             [batch["bbox_est"][i].detach().cpu().numpy()],
+    #             labels=[self.cls_names[i]]
+    #         )
+    #         vis_dict[f"im_{i}_mask_pose_est"] = image_mask_pose_est[:, :, ::-1]
+    #     show_ims = np.hstack([cv2.cvtColor(_v, cv2.COLOR_BGR2RGB) for _k, _v in vis_dict.items()])
+    #     cv2.imshow('result', show_ims)
+    #     cv2.waitKey(1)

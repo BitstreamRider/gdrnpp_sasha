@@ -46,7 +46,8 @@ loguru
 
 pytorch-lightning==1.6.0  # tested for 1.6.0.dev0
 fairscale
-deepspeed
+# remove because of errors with pytorch-lightning 1.6.0.dev0, see
+# deepspeed
 
 # verified versions
 pyro-ppl==1.4.0 #for epro-pnp <1.8.1
