@@ -183,8 +183,8 @@ RUN mkdir -p /root/ros2_ws/src
 RUN /bin/bash -c "source /opt/ros/humble/setup.bash && cd /root/ros2_ws && colcon build"
 
 # clone and build message and service definitions (doing it manually for now)
-#RUN /bin/bash -c 'cd /root/ros2_ws/src; \
-#                  git clone https://github.com/v4r-tuwien/object_detector_msgs.git'
+RUN /bin/bash -c 'cd /root/ros2_ws/src; \
+                  git clone -b ros2_humble https://github.com/BitstreamRider/object_detector_msgs.git'
 RUN /bin/bash -c 'cd /root/ros2_ws/src; \
                   git clone -b ros2_jazzy https://gitlab.informatik.uni-bremen.de/robokudo/robokudo_msgs.git'
 RUN /bin/bash -c '. /opt/ros/humble/setup.bash; cd /root/ros2_ws; colcon build'

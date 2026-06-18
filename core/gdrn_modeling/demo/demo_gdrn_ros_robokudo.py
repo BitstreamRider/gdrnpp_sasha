@@ -23,8 +23,6 @@ from rclpy.action import ActionServer
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.qos import QoSProfile, DurabilityPolicy
 from std_msgs.msg import Header, Float32MultiArray
-from object_detector_msgs.msg import BoundingBox, Detection, Detections, PoseWithConfidence
-from object_detector_msgs.srv import Detectron2ServiceServer, EstimatePoses
 from geometry_msgs.msg import Pose, Point, Quaternion
 from robokudo_msgs.action import GenericImgProcAnnotator
 import json
